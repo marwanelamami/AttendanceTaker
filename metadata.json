@@ -1,0 +1,8 @@
+{
+  "name": "AirDrop Attendance",
+  "description": "Proximity-based student attendance using inaudible ultrasonic sound (acts just like AirDrop discovery in physical spaces).",
+  "requestFramePermissions": [
+    "microphone"
+  ],
+  "majorCapabilities": []
+}
