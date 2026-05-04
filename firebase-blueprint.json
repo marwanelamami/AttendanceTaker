@@ -1,0 +1,45 @@
+{
+  "entities": {
+    "Beacon": {
+      "title": "Beacon",
+      "description": "An active event zone broadcasting for attendees",
+      "type": "object",
+      "properties": {
+        "name": { "type": "string", "maxLength": 100 },
+        "lat": { "type": "number" },
+        "lng": { "type": "number" },
+        "ownerId": { "type": "string" },
+        "active": { "type": "boolean" },
+        "createdAt": { "type": "timestamp" },
+        "updatedAt": { "type": "timestamp" }
+      },
+      "required": ["name", "lat", "lng", "ownerId", "active", "createdAt", "updatedAt"]
+    },
+    "CheckIn": {
+      "title": "CheckIn",
+      "description": "A check-in request from a student to a beacon",
+      "type": "object",
+      "properties": {
+        "studentId": { "type": "string", "maxLength": 50 },
+        "studentName": { "type": "string", "maxLength": 100 },
+        "studentUid": { "type": "string" },
+        "userLat": { "type": "number" },
+        "userLng": { "type": "number" },
+        "status": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "timestamp" },
+        "beaconOwnerId": { "type": "string" }
+      },
+      "required": ["studentId", "studentName", "studentUid", "userLat", "userLng", "status", "createdAt", "beaconOwnerId"]
+    }
+  },
+  "firestore": {
+    "/beacons/{beaconId}": {
+      "schema": { "$ref": "#/entities/Beacon" },
+      "description": "Active beacons created by teachers/hosts"
+    },
+    "/beacons/{beaconId}/checkIns/{checkInId}": {
+      "schema": { "$ref": "#/entities/CheckIn" },
+      "description": "Check-ins from attendees to specific beacons"
+    }
+  }
+}

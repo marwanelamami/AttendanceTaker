@@ -1,0 +1,87 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function existing() { return resource.data; }
+    function incoming() { return request.resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+    function isSignedIn() { return request.auth != null && request.auth.uid != null; }
+
+    function isValidBeacon(data) {
+      return data.keys().hasAll(['name', 'lat', 'lng', 'ownerId', 'active', 'createdAt', 'updatedAt']) &&
+             data.keys().size() == 7 &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.lat is number &&
+             data.lng is number &&
+             data.ownerId == request.auth.uid &&
+             data.active is bool &&
+             data.createdAt is timestamp &&
+             data.updatedAt is timestamp;
+    }
+
+    function isValidCheckIn(data, requiredBeaconOwnerId) {
+      return data.keys().hasAll(['studentId', 'studentName', 'studentUid', 'userLat', 'userLng', 'status', 'createdAt', 'beaconOwnerId']) &&
+             data.keys().size() == 8 &&
+             data.studentId is string && data.studentId.size() > 0 && data.studentId.size() <= 50 &&
+             data.studentName is string && data.studentName.size() > 0 && data.studentName.size() <= 100 &&
+             data.studentUid is string && data.studentUid == request.auth.uid &&
+             data.userLat is number &&
+             data.userLng is number &&
+             data.status in ['pending', 'approved', 'rejected'] &&
+             data.createdAt is timestamp &&
+             data.beaconOwnerId == requiredBeaconOwnerId;
+    }
+
+    match /beacons/{beaconId} {
+      allow get: if isSignedIn();
+      allow list: if isSignedIn();
+
+      allow create: if isSignedIn() &&
+                       isValidId(beaconId) &&
+                       isValidBeacon(incoming()) &&
+                       incoming().createdAt == request.time &&
+                       incoming().updatedAt == request.time;
+
+      allow update: if (
+                      isSignedIn() &&
+                      existing().ownerId == request.auth.uid &&
+                      isValidBeacon(incoming()) &&
+                      incoming().ownerId == existing().ownerId &&
+                      incoming().createdAt == existing().createdAt &&
+                      incoming().updatedAt == request.time &&
+                      (
+                        incoming().diff(existing()).affectedKeys().hasOnly(['name', 'lat', 'lng', 'active', 'updatedAt'])
+                      )
+                    );
+
+      allow delete: if isSignedIn() && existing().ownerId == request.auth.uid;
+
+      match /checkIns/{checkInId} {
+        allow get: if isSignedIn() && (existing().studentUid == request.auth.uid || existing().beaconOwnerId == request.auth.uid);
+        allow list: if isSignedIn() && (resource.data.studentUid == request.auth.uid || resource.data.beaconOwnerId == request.auth.uid);
+
+        allow create: if isSignedIn() &&
+                         isValidId(checkInId) &&
+                         isValidCheckIn(incoming(), get(/databases/$(database)/documents/beacons/$(beaconId)).data.ownerId) &&
+                         incoming().createdAt == request.time;
+
+        allow update: if (
+                         isSignedIn() &&
+                         existing().beaconOwnerId == request.auth.uid &&
+                         incoming().diff(existing()).affectedKeys().hasOnly(['status']) &&
+                         incoming().status in ['pending', 'approved', 'rejected'] &&
+                         incoming().studentUid == existing().studentUid &&
+                         incoming().beaconOwnerId == existing().beaconOwnerId &&
+                         incoming().createdAt == existing().createdAt &&
+                         incoming().studentId == existing().studentId &&
+                         incoming().studentName == existing().studentName &&
+                         incoming().userLat == existing().userLat &&
+                         incoming().userLng == existing().userLng
+                      );
+      }
+    }
+  }
+}
