@@ -1,8 +1,8 @@
 {
-  "name": "AirDrop Attendance",
-  "description": "Proximity-based student attendance using inaudible ultrasonic sound (acts just like AirDrop discovery in physical spaces).",
+  "name": "DropSync Attendance",
+  "description": "An AirDrop-style attendance system for big events, using proximity and peer-to-peer radar to check into local beacons.",
   "requestFramePermissions": [
-    "microphone"
+    "geolocation"
   ],
   "majorCapabilities": []
 }

@@ -4,321 +4,536 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
-import { AudioSender, AudioReceiver, ReceiveEvent } from './lib/modem';
-import { Users, User, Radio, Mic, CheckCircle2, ChevronLeft, Laptop, Smartphone, MapPin } from 'lucide-react';
+import { ShieldCheck, MapPin, CheckCircle2, Radar, User, Radio, Smartphone, AlertTriangle, Users } from 'lucide-react';
+import { motion, AnimatePresence } from 'motion/react';
+
+const CHANNEL_NAME = 'airdrop_attendance_channel';
+
+// Haversine distance formula (returns distance in meters)
+function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const R = 6371e3; 
+  const φ1 = lat1 * Math.PI/180;
+  const φ2 = lat2 * Math.PI/180;
+  const Δφ = (lat2-lat1) * Math.PI/180;
+  const Δλ = (lon2-lon1) * Math.PI/180;
+
+  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
+            Math.cos(φ1) * Math.cos(φ2) *
+            Math.sin(Δλ/2) * Math.sin(Δλ/2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  return R * c; 
+}
+
+interface BeaconNode {
+  id: string;
+  name: string;
+  lat: number;
+  lng: number;
+  timestamp: number;
+}
+
+interface CheckInRequest {
+  beaconId: string;
+  studentId: string;
+  studentName: string;
+}
 
 export default function App() {
-  const [role, setRole] = useState<'teacher' | 'student' | null>(null);
+  const [role, setRole] = useState<'beacon' | 'student' | null>(null);
   
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-cyan-500/30 overflow-hidden">
-      <header className="border-b border-white/10 bg-slate-900/80 backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-4xl mx-auto px-4 h-16 flex items-center justify-between">
+    <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-blue-500/30 overflow-hidden relative">
+      {/* Background ambient gradient */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-slate-800 via-slate-900 to-black pointer-events-none" />
+
+      <header className="relative z-50 border-b border-white/5 bg-black/20 backdrop-blur-xl">
+        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
             {role && (
               <button 
                 onClick={() => setRole(null)} 
-                className="mr-2 p-2 hover:bg-slate-800 rounded-full transition-colors"
+                className="mr-2 p-2 hover:bg-white/10 rounded-full transition-colors text-slate-400 hover:text-white"
+                title="Go Back"
               >
-                <ChevronLeft size={20} className="text-slate-400" />
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="m15 18-6-6 6-6"/></svg>
               </button>
             )}
-            <div className="w-10 h-10 bg-gradient-to-br from-indigo-500 to-cyan-500 text-white rounded-xl flex items-center justify-center shadow-[0_0_15px_rgba(34,211,238,0.3)]">
-              <MapPin size={20} />
+            <div className="w-10 h-10 bg-indigo-500/20 border border-indigo-500/30 text-indigo-400 rounded-2xl flex items-center justify-center shadow-[0_0_20px_rgba(99,102,241,0.2)]">
+              <Radar size={22} />
             </div>
             <div>
-              <h1 className="font-bold tracking-tight text-white leading-tight">Proximity Verify</h1>
-              <p className="text-[10px] text-cyan-400 font-mono tracking-widest uppercase opacity-80">AirDrop Attendance</p>
+              <h1 className="font-bold tracking-tight text-white leading-tight">DropSync</h1>
+              <p className="text-[10px] text-indigo-400 font-mono tracking-widest uppercase font-semibold text-opacity-80">Proximity Network</p>
             </div>
           </div>
         </div>
       </header>
 
-      <main className="max-w-4xl mx-auto px-4 py-8 md:py-16">
-        {!role && (
-          <div className="animate-in fade-in slide-in-from-bottom-4 duration-500 max-w-lg mx-auto space-y-6">
-            <div className="text-center mb-10 space-y-3">
-              <h2 className="text-3xl font-bold text-white tracking-tight">Select your role</h2>
-              <p className="text-slate-400">Join a class or start verifying attendance using physical proximity via ultrasonic sound.</p>
-            </div>
-            
-            <button 
-              onClick={() => setRole('teacher')}
-              className="w-full bg-slate-900 border border-white/10 hover:border-indigo-500/50 p-6 rounded-2xl flex items-center gap-6 group transition-all hover:bg-slate-800/80 shadow-lg"
+      <main className="relative z-10 max-w-7xl mx-auto h-[calc(100vh-4rem)] flex flex-col">
+        <AnimatePresence mode="wait">
+          {!role && (
+            <motion.div 
+              key="role-selector"
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95 }}
+              className="m-auto w-full max-w-3xl px-4 py-8"
             >
-              <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Laptop size={32} />
+              <div className="text-center mb-12 space-y-4">
+                <h2 className="text-4xl md:text-5xl font-bold text-white tracking-tight">Event Proximity</h2>
+                <p className="text-slate-400 text-lg max-w-xl mx-auto">
+                  Automatically discover nearby event beacons and check in instantly, just like AirDrop. Works cross-device.
+                </p>
               </div>
-              <div className="text-left">
-                <h3 className="text-xl font-bold text-white mb-1">I am a Teacher</h3>
-                <p className="text-sm text-slate-400">Broadcast your classroom beacon to verify student attendance nearby.</p>
-              </div>
-            </button>
+              
+              <div className="grid md:grid-cols-2 gap-6">
+                <button 
+                  onClick={() => setRole('beacon')}
+                  className="bg-white/5 border border-white/10 hover:border-indigo-500/50 hover:bg-indigo-500/10 p-8 rounded-[2rem] flex flex-col items-center text-center gap-6 group transition-all backdrop-blur-sm"
+                >
+                  <div className="w-20 h-20 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform duration-500 shadow-[0_0_30px_rgba(99,102,241,0.2)]">
+                    <Radio size={40} />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-2xl font-bold text-white">Setup Beacon</h3>
+                    <p className="text-sm text-slate-400 leading-relaxed max-w-[250px] mx-auto">Act as a discovery node for a specific zone (e.g. VIP Entrance, Main Stage).</p>
+                  </div>
+                </button>
 
-            <button 
-              onClick={() => setRole('student')}
-              className="w-full bg-slate-900 border border-white/10 hover:border-cyan-500/50 p-6 rounded-2xl flex items-center gap-6 group transition-all hover:bg-slate-800/80 shadow-lg"
-            >
-              <div className="w-16 h-16 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform">
-                <Smartphone size={32} />
+                <button 
+                  onClick={() => setRole('student')}
+                  className="bg-white/5 border border-white/10 hover:border-cyan-500/50 hover:bg-cyan-500/10 p-8 rounded-[2rem] flex flex-col items-center text-center gap-6 group transition-all backdrop-blur-sm"
+                >
+                  <div className="w-20 h-20 bg-cyan-500/20 text-cyan-400 rounded-full flex items-center justify-center group-hover:scale-110 transition-transform duration-500 shadow-[0_0_30px_rgba(34,211,238,0.2)]">
+                    <Smartphone size={40} />
+                  </div>
+                  <div className="space-y-2">
+                    <h3 className="text-2xl font-bold text-white">Attendee Radar</h3>
+                    <p className="text-sm text-slate-400 leading-relaxed max-w-[250px] mx-auto">Open your radar to discover nearby zones and verify your presence.</p>
+                  </div>
+                </button>
               </div>
-              <div className="text-left">
-                <h3 className="text-xl font-bold text-white mb-1">I am a Student</h3>
-                <p className="text-sm text-slate-400">Scan for your professor's nearby device to prove you are in the classroom.</p>
+              
+              <div className="mt-12 text-center">
+                <p className="text-xs text-slate-500 font-mono tracking-wide uppercase">
+                  Tip: Open this app in two tabs side-by-side to test the AirDrop effect!
+                </p>
               </div>
-            </button>
-          </div>
-        )}
+            </motion.div>
+          )}
 
-        {role === 'teacher' && <TeacherMode />}
-        {role === 'student' && <StudentMode />}
+          {role === 'beacon' && <BeaconMode key="beacon" />}
+          {role === 'student' && <StudentMode key="student" />}
+        </AnimatePresence>
       </main>
     </div>
   );
 }
 
-function TeacherMode() {
-  const [classCode, setClassCode] = useState("CS50");
+function BeaconMode() {
+  const [beaconName, setBeaconName] = useState("Main Stage");
   const [isBroadcasting, setIsBroadcasting] = useState(false);
-  const audioContextReady = useRef(false);
+  const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [checkIns, setCheckIns] = useState<CheckInRequest[]>([]);
   
+  const channelRef = useRef<BroadcastChannel | null>(null);
+
   useEffect(() => {
-    let active = true;
-    let timeout: any;
+    channelRef.current = new BroadcastChannel(CHANNEL_NAME);
     
-    const broadcastLoop = async () => {
-      if (!active) return;
-      try {
-        const sender = new AudioSender();
-        // Send a clean padded command string
-        await sender.send(`+${classCode.padEnd(4, ' ')}+`);
-      } catch (e) {
-         console.error("Broadcast failed", e);
-      }
-      
-      if (active) {
-        // Wait 1.5 seconds between pings so students can lock on
-        timeout = setTimeout(broadcastLoop, 1500);
+    channelRef.current.onmessage = (event) => {
+      if (event.data.type === 'CHECK_IN' && event.data.beaconId === beaconName) {
+        setCheckIns(prev => [event.data, ...prev]);
+        // Send ACK
+        setTimeout(() => {
+          channelRef.current?.postMessage({
+            type: 'CHECK_IN_ACK',
+            studentId: event.data.studentId,
+            beaconId: beaconName
+          });
+        }, 500);
       }
     };
 
-    if (isBroadcasting) {
-      broadcastLoop();
-    }
-    
     return () => {
-      active = false;
-      clearTimeout(timeout);
+      channelRef.current?.close();
     };
-  }, [isBroadcasting, classCode]);
+  }, [beaconName]);
+
+  useEffect(() => {
+    let interval: any;
+    if (isBroadcasting) {
+      // Announce heartbeat
+      interval = setInterval(() => {
+        channelRef.current?.postMessage({
+          type: 'BEACON_ANNOUNCE',
+          id: beaconName, // using name as ID for demo
+          name: beaconName,
+          lat: coords?.lat || 0,
+          lng: coords?.lng || 0,
+          timestamp: Date.now()
+        });
+      }, 1500);
+    }
+    return () => clearInterval(interval);
+  }, [isBroadcasting, beaconName, coords]);
+
+  const toggleBroadcast = () => {
+    if (!isBroadcasting) {
+      navigator.geolocation.getCurrentPosition(
+        (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+        (err) => console.log("Geo error, using mock coords", err)
+      );
+    }
+    setIsBroadcasting(!isBroadcasting);
+  };
 
   return (
-    <div className="max-w-xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="text-center space-y-2 mb-10">
-        <h2 className="text-2xl font-bold text-white">Teacher Dashboard</h2>
-        <p className="text-slate-400 text-sm">Your device will act as a proximity beacon.</p>
-      </div>
-
-      <div className="bg-slate-900 border border-white/10 rounded-3xl p-8 shadow-2xl relative overflow-hidden">
-        {/* Radar Effect Background when broadcasting */}
+    <motion.div 
+      initial={{ opacity: 0, scale: 0.95 }}
+      animate={{ opacity: 1, scale: 1 }}
+      className="m-auto w-full max-w-3xl grid md:grid-cols-2 gap-8 px-4"
+    >
+      <div className="flex flex-col items-center justify-center space-y-8 bg-white/5 border border-white/10 rounded-[2rem] p-8 backdrop-blur-md relative overflow-hidden">
+        {/* Radar Ping Background */}
         {isBroadcasting && (
-          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-20">
-             <div className="w-64 h-64 rounded-full border-[2px] border-indigo-500 animate-[ping_3s_linear_infinite]" />
-             <div className="absolute w-96 h-96 rounded-full border border-indigo-500 animate-[ping_3s_linear_infinite_1s]" />
-             <div className="absolute w-[32rem] h-[32rem] rounded-full border border-indigo-500 animate-[ping_3s_linear_infinite_2s]" />
+          <div className="absolute inset-0 flex items-center justify-center pointer-events-none opacity-30">
+             <div className="w-[200%] aspect-square rounded-full border border-indigo-500/50 animate-[ping_4s_linear_infinite]" />
+             <div className="absolute w-[150%] aspect-square rounded-full border border-indigo-500/40 animate-[ping_4s_linear_infinite_1s]" />
           </div>
         )}
 
-        <div className="relative z-10 space-y-8">
-          <div>
-            <label className="block text-sm font-medium text-slate-400 mb-2 text-center">Enter Class Code (Max 4 characters)</label>
-            <input 
-              type="text"
-              value={classCode}
-              maxLength={4}
-              onChange={e => setClassCode(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
-              className="w-full max-w-[200px] mx-auto block bg-slate-950 border border-slate-800 focus:border-indigo-500/50 focus:ring-1 focus:ring-indigo-500/50 rounded-xl p-4 text-center text-3xl text-indigo-400 font-mono font-bold transition-all outline-none"
-              disabled={isBroadcasting}
-            />
-          </div>
-          
-          <button 
-            onClick={() => setIsBroadcasting(!isBroadcasting)}
-            disabled={!classCode}
-            className={`w-full relative overflow-hidden flex items-center justify-center gap-3 py-5 rounded-2xl font-bold text-lg transition-all 
-              ${isBroadcasting 
-                ? 'bg-slate-800 text-red-400 border border-red-900/50 hover:bg-slate-700' 
-                : 'bg-indigo-600 hover:bg-indigo-500 text-white shadow-[0_0_30px_rgba(99,102,241,0.3)]'}`}
-          >
-            {isBroadcasting ? (
-              <>
-                <div className="w-3 h-3 bg-red-500 rounded-full animate-pulse" />
-                <span>Stop Broadcasting</span>
-              </>
-            ) : (
-              <>
-                <Radio size={24} />
-                <span>Make Discoverable</span>
-              </>
-            )}
-          </button>
+        <div className="relative z-10 w-full">
+          <label className="block text-sm font-semibold text-slate-400 mb-2 text-center">Zone/Beacon Name</label>
+          <input 
+            type="text"
+            value={beaconName}
+            onChange={e => setBeaconName(e.target.value)}
+            className="w-full bg-black/50 border border-white/10 focus:border-indigo-500/50 rounded-2xl p-4 text-center text-2xl text-white font-bold transition-all outline-none"
+            disabled={isBroadcasting}
+          />
+        </div>
+        
+        <button 
+          onClick={toggleBroadcast}
+          className={`relative z-10 w-48 h-48 rounded-full flex flex-col items-center justify-center gap-4 transition-all duration-500 
+            ${isBroadcasting 
+              ? 'bg-rose-500/20 text-rose-400 border-[8px] border-rose-500/30' 
+              : 'bg-indigo-500 text-white border-[8px] border-indigo-500/30 shadow-[0_0_40px_rgba(99,102,241,0.5)] hover:scale-105'}`}
+        >
+          <Radio size={48} className={isBroadcasting ? "animate-pulse" : ""} />
+          <span className="font-bold tracking-wider uppercase text-sm">
+            {isBroadcasting ? 'Stop Ping' : 'Simulate Station'}
+          </span>
+        </button>
+      </div>
+
+      <div className="bg-white/5 border border-white/10 rounded-[2rem] p-8 backdrop-blur-md flex flex-col h-[500px]">
+        <h3 className="text-xl font-bold flex items-center gap-2 mb-6">
+          <Users className="text-indigo-400" />
+          Recent Connections ({checkIns.length})
+        </h3>
+        
+        <div className="flex-1 overflow-y-auto space-y-3 pr-2 custom-scrollbar">
+          {checkIns.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-500">
+               <Radar size={40} className="mb-4 opacity-50" />
+               <p>Waiting for attendees...</p>
+            </div>
+          ) : (
+            <AnimatePresence>
+              {checkIns.map((ci, i) => (
+                <motion.div 
+                  initial={{ opacity: 0, x: -20 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  key={i} 
+                  className="bg-black/40 border border-white/5 p-4 rounded-xl flex items-center gap-4"
+                >
+                  <div className="w-10 h-10 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center shrink-0">
+                    <CheckCircle2 size={20} />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white leading-tight">{ci.studentName}</h4>
+                    <p className="text-xs text-slate-400 font-mono mt-1">ID: {ci.studentId}</p>
+                  </div>
+                </motion.div>
+              ))}
+            </AnimatePresence>
+          )}
         </div>
       </div>
-      
-      <div className="bg-indigo-950/30 border border-indigo-900/50 rounded-xl p-5 text-sm text-indigo-200/80">
-        <strong className="text-indigo-400 block mb-1">How it works:</strong>
-        <p>This broadcasts a high-frequency (ultrasonic) invisible pulse from your speakers. Students must be physically in the same room to receive it on their phones, mimicking an AirDrop discovery.</p>
-        <p className="mt-2 opacity-70">Make sure your laptop speakers are unmuted and moderately loud.</p>
-      </div>
-    </div>
+    </motion.div>
   );
 }
 
 function StudentMode() {
+  const [studentInfo, setStudentInfo] = useState({ name: 'Jane Doe', id: 'STU' + Math.floor(Math.random() * 9000 + 1000) });
   const [isScanning, setIsScanning] = useState(false);
-  const [foundClass, setFoundClass] = useState<string | null>(null);
-  const [isConfirmed, setIsConfirmed] = useState(false);
-  const [statusText, setStatusText] = useState("Turn up volume & allow microphone.");
+  const [beacons, setBeacons] = useState<Map<string, BeaconNode>>(new Map());
+  const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
   
-  const receiverRef = useRef<AudioReceiver | null>(null);
+  const [selectedBeacon, setSelectedBeacon] = useState<BeaconNode | null>(null);
+  const [isCheckingIn, setIsCheckingIn] = useState(false);
+  const [checkedInBeacons, setCheckedInBeacons] = useState<string[]>([]);
 
-  const startScanning = async () => {
-    setIsScanning(true);
-    setFoundClass(null);
-    setIsConfirmed(false);
-    setStatusText("Scanning nearby devices...");
+  const channelRef = useRef<BroadcastChannel | null>(null);
+
+  useEffect(() => {
+    channelRef.current = new BroadcastChannel(CHANNEL_NAME);
     
-    try {
-      const receiver = new AudioReceiver();
-      receiverRef.current = receiver;
+    channelRef.current.onmessage = (event) => {
+      // 1. Listen for heartbeats
+      if (event.data.type === 'BEACON_ANNOUNCE') {
+         setBeacons(prev => {
+           const map = new Map(prev);
+           map.set(event.data.id, event.data as BeaconNode);
+           return map;
+         });
+      }
       
-      await receiver.start((event: ReceiveEvent) => {
-        if (event.type === 'receiving') {
-           setStatusText("Incoming signal detected...");
-        } else if (event.type === 'complete') {
-           let decoded = event.text.replace(/[^A-Z0-9+]/g, '');
-           
-           // We padded our broadcast with + to prevent noise errors
-           // e.g. "+CS50+"
-           if (decoded.includes('+')) {
-              const parts = decoded.split('+');
-              const code = parts[1] || parts[0]; // naive extraction
-              if (code && code.trim().length > 0) {
-                 setFoundClass(code.trim());
-                 setStatusText("Classroom device found!");
-                 receiver.stop(); // Stop scanning once found
-                 setIsScanning(false);
-              }
-           } else {
-             setStatusText("Scanning nearby devices..."); // keep scanning
-           }
-        }
+      // 2. Listen for Check-In ACKs
+      if (event.data.type === 'CHECK_IN_ACK' && event.data.studentId === studentInfo.id) {
+         setIsCheckingIn(false);
+         setCheckedInBeacons(prev => [...prev, event.data.beaconId]);
+         setSelectedBeacon(null);
+      }
+    };
+
+    return () => {
+      channelRef.current?.close();
+    };
+  }, [studentInfo.id]);
+
+  useEffect(() => {
+    if (!isScanning) return;
+    
+    // Inject a fake demo beacon if nothing is found after 4s to ensure the UI can be tested easily by 1 person
+    const demoTimer = setTimeout(() => {
+      setBeacons(prev => {
+         if (prev.size === 0) {
+           const map = new Map(prev);
+           map.set('mock', { id: 'mock', name: 'VIP Lounge (Demo)', lat: 0, lng: 0, timestamp: Date.now() });
+           return map;
+         }
+         return prev;
       });
-    } catch (e) {
-      console.error(e);
-      setStatusText("Microphone permission denied.");
-      setIsScanning(false);
+    }, 4000);
+
+    // Garbage collect stale beacons
+    const gcInterval = setInterval(() => {
+      const now = Date.now();
+      setBeacons(prev => {
+        const map = new Map(prev);
+        let changed = false;
+        map.forEach((value, key) => {
+          if (now - value.timestamp > 8000 && key !== 'mock') { // keep mock alive longer for demo
+            map.delete(key);
+            changed = true;
+          }
+        });
+        return changed ? map : prev;
+      });
+    }, 2000);
+
+    return () => {
+      clearTimeout(demoTimer);
+      clearInterval(gcInterval);
+    };
+  }, [isScanning]);
+
+  const handleStartScan = () => {
+    if (!studentInfo.name.trim()) return;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
+      (err) => console.log("Geo error")
+    );
+    setIsScanning(true);
+  };
+
+  const handleTapNode = (beacon: BeaconNode) => {
+    if (checkedInBeacons.includes(beacon.id)) return;
+    setSelectedBeacon(beacon);
+  };
+
+  const confirmCheckIn = () => {
+    if (!selectedBeacon) return;
+    setIsCheckingIn(true);
+    
+    // Send check-in payload
+    channelRef.current?.postMessage({
+      type: 'CHECK_IN',
+      beaconId: selectedBeacon.id,
+      studentId: studentInfo.id,
+      studentName: studentInfo.name,
+      userLat: coords?.lat,
+      userLng: coords?.lng
+    });
+    
+    // Fallback success for the demo mock beacon
+    if (selectedBeacon.id === 'mock') {
+      setTimeout(() => {
+        setIsCheckingIn(false);
+        setCheckedInBeacons(prev => [...prev, selectedBeacon.id]);
+        setSelectedBeacon(null);
+      }, 1000);
     }
   };
 
-  const stopScanning = () => {
-    receiverRef.current?.stop();
-    setIsScanning(false);
-    setStatusText("Scanning cancelled.");
-  };
-
-  useEffect(() => {
-    return () => receiverRef.current?.stop();
-  }, []);
-
-  const handleConfirm = () => {
-    // In a real app, this sends a POST to your database
-    setIsConfirmed(true);
-  };
+  if (!isScanning) {
+    return (
+      <motion.div 
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="m-auto w-full max-w-sm bg-white/5 border border-white/10 rounded-[2rem] p-8 backdrop-blur-xl shadow-2xl"
+      >
+         <h2 className="text-2xl font-bold text-center mb-8">Your Identity</h2>
+         <div className="space-y-6">
+            <div>
+              <label className="block text-sm font-semibold text-slate-400 mb-2">Display Name</label>
+              <input 
+                type="text"
+                value={studentInfo.name}
+                onChange={e => setStudentInfo({...studentInfo, name: e.target.value})}
+                className="w-full bg-black/50 border border-white/10 focus:border-cyan-500/50 rounded-xl p-4 text-white font-medium outline-none transition-colors"
+              />
+            </div>
+            
+            <button 
+              onClick={handleStartScan}
+              disabled={!studentInfo.name}
+              className="w-full bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-4 rounded-xl shadow-[0_0_20px_rgba(8,145,178,0.4)] transition-all active:scale-95"
+            >
+              Open Radar
+            </button>
+         </div>
+      </motion.div>
+    );
+  }
 
   return (
-    <div className="max-w-xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+    <div className="relative w-full h-full flex flex-col items-center justify-center overflow-hidden">
       
-      <div className="text-center space-y-2 mb-10">
-        <h2 className="text-2xl font-bold text-white">Student Check-in</h2>
-        <p className="text-slate-400 text-sm">{statusText}</p>
-      </div>
-
-      <div className="relative min-h-[400px] bg-slate-900 border border-white/10 rounded-3xl p-8 shadow-2xl flex flex-col items-center justify-center overflow-hidden">
+      {/* Background Radar Rings */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+        <div className="w-[10vh] h-[10vh] rounded-full border border-cyan-500/10" />
+        <div className="absolute w-[30vh] h-[30vh] rounded-full border border-cyan-500/20 shadow-[inset_0_0_50px_rgba(6,182,212,0.05)]" />
+        <div className="absolute w-[60vh] h-[60vh] rounded-full border border-cyan-500/10" />
+        <div className="absolute w-[90vh] h-[90vh] rounded-full border border-cyan-500/5" />
         
-        {/* Radar UI */}
-        {isScanning && !foundClass && (
-          <div className="absolute inset-0 flex items-center justify-center overflow-hidden">
-            <div className="w-32 h-32 rounded-full bg-cyan-500/10 border border-cyan-500/30 animate-[ping_2s_ease-out_infinite]" />
-            <div className="absolute w-64 h-64 rounded-full bg-cyan-500/5 border border-cyan-500/20 animate-[ping_2s_ease-out_infinite_0.5s]" />
-            <div className="absolute w-96 h-96 rounded-full border border-cyan-500/10 animate-[ping_2s_ease-out_infinite_1s]" />
-            <div className="absolute w-[32rem] h-[32rem] rounded-full border border-cyan-500/5 animate-[ping_2s_ease-out_infinite_1.5s]" />
-            
-            <div className="relative z-10 w-20 h-20 bg-slate-800 rounded-full border border-cyan-500/50 flex items-center justify-center shadow-[0_0_30px_rgba(34,211,238,0.2)]">
-               <Smartphone size={32} className="text-cyan-400 animate-pulse" />
-            </div>
-          </div>
-        )}
-
-        {/* Found a Device! */}
-        {foundClass && !isConfirmed && (
-          <div className="animate-in zoom-in-95 duration-300 w-full relative z-10 flex flex-col items-center">
-             <div className="w-24 h-24 bg-gradient-to-br from-indigo-500 to-purple-600 rounded-full flex items-center justify-center shadow-xl mb-6 ring-4 ring-indigo-500/30">
-               <Laptop size={40} className="text-white" />
-             </div>
-             
-             <h3 className="text-base font-medium text-slate-400 mb-1">Teacher's Device Found</h3>
-             <p className="text-3xl font-bold text-white font-mono tracking-widest mb-8">{foundClass}</p>
-
-             <button 
-               onClick={handleConfirm}
-               className="w-full max-w-sm bg-white text-slate-900 hover:bg-slate-100 font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-95"
-             >
-               Tap to Record Attendance
-             </button>
-          </div>
-        )}
-
-        {/* Success */}
-        {isConfirmed && (
-          <div className="animate-in zoom-in-95 duration-500 relative z-10 flex flex-col items-center">
-             <div className="w-24 h-24 bg-emerald-500/20 rounded-full flex items-center justify-center mb-6">
-               <CheckCircle2 size={64} className="text-emerald-400" />
-             </div>
-             <h3 className="text-2xl font-bold text-white mb-2">You're Checked In</h3>
-             <p className="text-slate-400">Your physical presence in {foundClass} has been verified.</p>
-          </div>
-        )}
-
-        {/* Initial / Default States */}
-        {!isScanning && !foundClass && !isConfirmed && (
-          <div className="w-full flex flex-col items-center justify-center relative z-10">
-             <div className="w-24 h-24 bg-slate-800 rounded-full flex items-center justify-center mb-8 border border-white/5">
-                <Mic size={36} className="text-slate-500" />
-             </div>
-             <button 
-               onClick={startScanning}
-               className="w-full max-w-xs bg-cyan-600 hover:bg-cyan-500 text-white font-bold py-4 rounded-2xl shadow-[0_0_20px_rgba(8,145,178,0.3)] transition-transform active:scale-95"
-             >
-               Scan for Classroom
-             </button>
-             <p className="text-xs text-slate-500 mt-6 text-center max-w-xs">
-               Uses inaudible ultrasonic sound from the professor's device to verify you are currently in the room.
-             </p>
-          </div>
-        )}
-
-        {isScanning && !foundClass && (
-          <button 
-            onClick={stopScanning}
-            className="absolute bottom-6 px-6 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-full text-sm font-medium z-20 border border-white/10 transition-colors"
-          >
-            Cancel Scan
-          </button>
-        )}
+        {/* Sweep effect */}
+        <motion.div 
+          animate={{ rotate: 360 }}
+          transition={{ duration: 4, ease: "linear", repeat: Infinity }}
+          className="absolute w-[90vh] h-[90vh] rounded-full origin-center"
+          style={{ background: 'conic-gradient(from 0deg, transparent 75%, rgba(6,182,212,0.15) 100%)' }}
+        />
       </div>
+
+      {/* Center Device Profile */}
+      <div className="relative z-10 w-24 h-24 bg-slate-900 border border-cyan-500/50 rounded-full flex flex-col items-center justify-center shadow-[0_0_30px_rgba(6,182,212,0.3)]">
+        <User size={32} className="text-cyan-400" />
+        <span className="absolute -bottom-8 whitespace-nowrap text-xs font-bold text-slate-300 px-3 py-1 bg-black/60 rounded-full backdrop-blur-md">
+           {studentInfo.name}
+        </span>
+      </div>
+
+      {/* Discovered Beacons mapped onto the radar */}
+      <AnimatePresence>
+        {Array.from(beacons.values()).map((beacon, idx) => {
+           // Create a completely stable deterministic pseudo-random angle based on beacon name
+           const hash = Array.from(beacon.name).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+           const angle = (hash * 47) % 360;
+           const radiusStr = `30vh`; // Place them on the middle ring
+           
+           const isCheckedIn = checkedInBeacons.includes(beacon.id);
+
+           return (
+             <motion.div
+               initial={{ scale: 0, opacity: 0 }}
+               animate={{ scale: 1, opacity: 1, rotate: angle }}
+               exit={{ scale: 0, opacity: 0 }}
+               key={beacon.id}
+               className="absolute w-0 h-0 flex items-center justify-center z-20"
+             >
+                <div 
+                  className="absolute" 
+                  style={{ transform: `translateY(-${radiusStr})` }}
+                >
+                  <motion.button 
+                    whileHover={{ scale: 1.1 }}
+                    whileTap={{ scale: 0.95 }}
+                    onClick={() => handleTapNode(beacon)}
+                    style={{ rotate: -angle }} // counter-rotate so it stays upright
+                    className="flex flex-col items-center group cursor-pointer"
+                  >
+                     <div className={`w-16 h-16 rounded-full flex items-center justify-center shadow-2xl border-2 transition-colors duration-300
+                       ${isCheckedIn 
+                         ? 'bg-emerald-500/20 border-emerald-400 text-emerald-400' 
+                         : 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300 hover:bg-indigo-500/40 hover:border-indigo-400'}`}
+                     >
+                        {isCheckedIn ? <CheckCircle2 size={28} /> : <MapPin size={28} />}
+                     </div>
+                     <span className="mt-2 text-sm font-semibold text-white px-3 py-1 bg-black/40 rounded-full backdrop-blur-md whitespace-nowrap border border-white/5">
+                        {beacon.name}
+                     </span>
+                  </motion.button>
+                </div>
+             </motion.div>
+           );
+        })}
+      </AnimatePresence>
+
+      {/* Selection Modal Bottom Sheet */}
+      <AnimatePresence>
+        {selectedBeacon && (
+          <motion.div 
+            initial={{ opacity: 0, y: 100 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 100 }}
+            className="absolute bottom-6 w-full max-w-sm z-50 px-4"
+          >
+            <div className="bg-slate-800/90 backdrop-blur-xl border border-white/10 p-6 rounded-[2rem] shadow-2xl flex flex-col items-center text-center">
+               <div className="w-16 h-16 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mb-4">
+                  <MapPin size={32} />
+               </div>
+               <h3 className="text-xl font-bold mb-1">{selectedBeacon.name}</h3>
+               <p className="text-sm border border-slate-700 bg-slate-900 px-3 py-1 rounded-full text-slate-400 font-mono mb-6">
+                 ~ {coords ? Math.round(getDistance(coords.lat, coords.lng, selectedBeacon.lat, selectedBeacon.lng)) : '< 20'} meters away
+               </p>
+
+               <div className="w-full flex gap-3">
+                 <button 
+                   onClick={() => setSelectedBeacon(null)}
+                   disabled={isCheckingIn}
+                   className="flex-1 px-4 py-3 bg-white/5 hover:bg-white/10 rounded-xl font-medium transition-colors"
+                 >
+                   Cancel
+                 </button>
+                 <button 
+                   onClick={confirmCheckIn}
+                   disabled={isCheckingIn}
+                   className="flex-[2] flex items-center justify-center px-4 py-3 bg-indigo-500 hover:bg-indigo-400 text-white rounded-xl font-bold shadow-lg shadow-indigo-500/30 transition-all active:scale-95 disabled:opacity-50"
+                 >
+                   {isCheckingIn ? 'Connecting...' : 'Request Check-In'}
+                 </button>
+               </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      
+      {/* Top Status */}
+      <div className="absolute top-6 flex flex-col items-center z-20">
+        <span className="text-slate-400 text-sm font-medium animate-pulse mb-1">Scanning event space...</span>
+        <span className="text-blue-400 text-xs font-mono bg-blue-500/10 px-3 py-1 rounded-full border border-blue-500/20">
+           {beacons.size} beacon{beacons.size !== 1 ? 's' : ''} found
+        </span>
+      </div>
+      
     </div>
   );
 }
+
+
 
 
