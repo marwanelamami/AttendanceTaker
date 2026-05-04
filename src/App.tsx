@@ -1,12 +1,8 @@
 import { useState, useEffect, useRef } from 'react';
-import { ShieldCheck, MapPin, CheckCircle2, Radar, User, Radio, Smartphone, AlertTriangle, Users, LogOut } from 'lucide-react';
+import { ShieldCheck, MapPin, CheckCircle2, Radar, User, Radio, Smartphone, AlertTriangle, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { auth, db, signIn, logOut, handleFirestoreError, OperationType } from './lib/firebase';
-import { onAuthStateChanged } from 'firebase/auth';
-import { 
-  collection, query, where, onSnapshot, doc, setDoc, updateDoc, 
-  serverTimestamp, deleteDoc 
-} from 'firebase/firestore';
+
+const CHANNEL_NAME = 'dropsync_event_channel';
 
 // Haversine distance formula (returns distance in meters)
 function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -43,51 +39,6 @@ interface CheckInRequest {
 
 export default function App() {
   const [role, setRole] = useState<'beacon' | 'student' | null>(null);
-  const [currentUser, setCurrentUser] = useState<any>(null);
-  const [loadingAuth, setLoadingAuth] = useState(true);
-
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (user) => {
-      setCurrentUser(user);
-      setLoadingAuth(false);
-    });
-    return () => unsub();
-  }, []);
-
-  if (loadingAuth) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex items-center justify-center">
-        <Radar className="text-indigo-500 animate-pulse" size={48} />
-      </div>
-    );
-  }
-
-  if (!currentUser) {
-    return (
-      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-4">
-         <div className="max-w-md w-full bg-white/5 border border-white/10 rounded-[2rem] p-8 text-center backdrop-blur-xl">
-           <div className="w-20 h-20 bg-indigo-500/20 text-indigo-400 rounded-full flex items-center justify-center mx-auto mb-6">
-              <Radar size={40} />
-           </div>
-           <h1 className="text-3xl font-bold text-white mb-2">DropSync</h1>
-           <p className="text-slate-400 mb-8">Production-grade event proximity and attendance Network, powered by Firebase.</p>
-           
-           <button 
-             onClick={signIn}
-             className="w-full bg-white text-slate-900 font-bold py-4 rounded-xl shadow-lg transition-transform active:scale-95 flex items-center justify-center gap-3"
-           >
-             <svg className="w-5 h-5" viewBox="0 0 24 24">
-                <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-                <path fill="#4CAF50" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-                <path fill="#FBC02D" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-                <path fill="#E53935" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-             </svg>
-             Continue with Google
-           </button>
-         </div>
-      </div>
-    );
-  }
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-blue-500/30 overflow-hidden relative">
@@ -113,10 +64,6 @@ export default function App() {
               <p className="text-[10px] text-indigo-400 font-mono tracking-widest uppercase font-semibold text-opacity-80">Proximity Network</p>
             </div>
           </div>
-          
-          <button onClick={logOut} className="flex items-center gap-2 text-sm text-slate-400 hover:text-white transition-colors">
-            <LogOut size={16} /> <span className="hidden sm:inline">Sign Out</span>
-          </button>
         </div>
       </header>
 
@@ -167,102 +114,94 @@ export default function App() {
             </motion.div>
           )}
 
-          {role === 'beacon' && <BeaconMode key="beacon" user={currentUser} />}
-          {role === 'student' && <StudentMode key="student" user={currentUser} />}
+          {role === 'beacon' && <BeaconMode key="beacon" />}
+          {role === 'student' && <StudentMode key="student" />}
         </AnimatePresence>
       </main>
     </div>
   );
 }
 
-function BeaconMode({ user }: { user: any }) {
+function BeaconMode() {
   const [beaconName, setBeaconName] = useState("Main Stage");
   const [isBroadcasting, setIsBroadcasting] = useState(false);
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
   const [checkIns, setCheckIns] = useState<CheckInRequest[]>([]);
-  const beaconId = user.uid; // One beacon per user for simplicity
+  const [beaconId] = useState(() => 'BCA_' + Math.floor(Math.random() * 1000000));
+  const channelRef = useRef<BroadcastChannel | null>(null);
 
   useEffect(() => {
-    if (!isBroadcasting) return;
-
-    // Listen to checkIns
-    const path = `beacons/${beaconId}/checkIns`;
-    const q = query(collection(db, path));
-    const unsub = onSnapshot(q, (snapshot) => {
-       const results: CheckInRequest[] = [];
-       snapshot.forEach(doc => {
-         results.push({ id: doc.id, ...doc.data() } as CheckInRequest);
-       });
-       setCheckIns(results);
-    }, (err) => {
-       handleFirestoreError(err, OperationType.LIST, path);
-    });
-
-    return () => unsub();
-  }, [isBroadcasting, beaconId]);
+    channelRef.current = new BroadcastChannel(CHANNEL_NAME);
+    channelRef.current.onmessage = (event) => {
+      const { type, payload } = event.data;
+      if (type === 'CHECK_IN' && payload.beaconId === beaconId) {
+        setCheckIns(prev => {
+          if (prev.find(c => c.studentId === payload.studentInfo.id)) return prev;
+          const newCI: CheckInRequest = {
+            id: payload.studentInfo.id,
+            beaconId: beaconId,
+            studentId: payload.studentInfo.id,
+            studentName: payload.studentInfo.name,
+            status: 'approved'
+          };
+          return [newCI, ...prev];
+        });
+        
+        // Ack check in
+        channelRef.current?.postMessage({
+          type: 'CHECK_IN_ACK',
+          payload: {
+            beaconId: beaconId,
+            studentId: payload.studentInfo.id,
+            status: 'approved'
+          }
+        });
+      }
+    };
+    return () => {
+      channelRef.current?.close();
+    };
+  }, [beaconId]);
 
   useEffect(() => {
     let interval: any;
-    if (isBroadcasting) {
-      const updateBeacon = async () => {
-         try {
-           const path = `beacons/${beaconId}`;
-           await updateDoc(doc(db, path), {
-             updatedAt: serverTimestamp()
-           });
-         } catch(e) {
-           handleFirestoreError(e, OperationType.UPDATE, `beacons/${beaconId}`);
-         }
+    if (isBroadcasting && coords) {
+      const broadcast = () => {
+        channelRef.current?.postMessage({
+          type: 'BEACON_ANNOUNCE',
+          payload: {
+            id: beaconId,
+            name: beaconName,
+            lat: coords.lat,
+            lng: coords.lng,
+            active: true,
+            updatedAt: Date.now()
+          }
+        });
       };
-      
-      // Ping every 5 seconds to keep it "active" to clients
-      interval = setInterval(updateBeacon, 5000);
+      broadcast(); // fire immediately
+      interval = setInterval(broadcast, 1000 * 3);
     }
     return () => clearInterval(interval);
-  }, [isBroadcasting, beaconId]);
+  }, [isBroadcasting, coords, beaconName, beaconId]);
 
-  const toggleBroadcast = async () => {
+  const toggleBroadcast = () => {
     if (!isBroadcasting) {
       navigator.geolocation.getCurrentPosition(
-        async (pos) => {
+        (pos) => {
            setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-           try {
-             await setDoc(doc(db, `beacons/${beaconId}`), {
-               name: beaconName,
-               lat: pos.coords.latitude,
-               lng: pos.coords.longitude,
-               ownerId: user.uid,
-               active: true,
-               createdAt: serverTimestamp(),
-               updatedAt: serverTimestamp()
-             });
-             setIsBroadcasting(true);
-           } catch (e) {
-             handleFirestoreError(e, OperationType.CREATE, `beacons/${beaconId}`);
-           }
+           setIsBroadcasting(true);
         },
         (err) => {
            console.error("Geo error, using mock coords", err);
-           alert("Please enable location services to start a beacon.");
+           setCoords({ lat: 40.7128, lng: -74.0060 });
+           setIsBroadcasting(true);
         }
       );
     } else {
       setIsBroadcasting(false);
-      try {
-        await deleteDoc(doc(db, `beacons/${beaconId}`));
-      } catch (e) {
-        handleFirestoreError(e, OperationType.DELETE, `beacons/${beaconId}`);
-      }
     }
   };
-  
-  useEffect(() => {
-    return () => {
-       if (isBroadcasting) {
-          deleteDoc(doc(db, `beacons/${beaconId}`)).catch(()=> {});
-       }
-    };
-  }, [isBroadcasting, beaconId]);
 
   return (
     <motion.div 
@@ -341,8 +280,8 @@ function BeaconMode({ user }: { user: any }) {
   );
 }
 
-function StudentMode({ user }: { user: any }) {
-  const [studentInfo, setStudentInfo] = useState({ name: user.displayName || 'Jane Doe', id: 'STU' + Math.floor(Math.random() * 9000 + 1000) });
+function StudentMode() {
+  const [studentInfo, setStudentInfo] = useState({ name: 'Jane Doe', id: 'STU' + Math.floor(Math.random() * 9000 + 1000) });
   const [isScanning, setIsScanning] = useState(false);
   const [beacons, setBeacons] = useState<Map<string, BeaconNode>>(new Map());
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
@@ -350,34 +289,50 @@ function StudentMode({ user }: { user: any }) {
   const [selectedBeacon, setSelectedBeacon] = useState<BeaconNode | null>(null);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [checkedInBeacons, setCheckedInBeacons] = useState<string[]>([]);
+  const channelRef = useRef<BroadcastChannel | null>(null);
 
   useEffect(() => {
     if (!isScanning) return;
     
-    // Query active beacons
-    const q = query(collection(db, 'beacons'), where("active", "==", true));
-    const unsub = onSnapshot(q, (snapshot) => {
-       setBeacons(prev => {
-          const map = new Map(prev);
-          snapshot.docs.forEach(doc => {
-            const data = doc.data() as BeaconNode;
-            data.id = doc.id;
-            map.set(doc.id, data);
-          });
-          // Remove deleted ones
-          snapshot.docChanges().forEach(change => {
-            if (change.type === 'removed') {
-              map.delete(change.doc.id);
-            }
-          });
-          return map;
-       });
-    }, (err) => {
-       handleFirestoreError(err, OperationType.LIST, 'beacons');
-    });
+    channelRef.current = new BroadcastChannel(CHANNEL_NAME);
+    channelRef.current.onmessage = (event) => {
+      const { type, payload } = event.data;
+      if (type === 'BEACON_ANNOUNCE') {
+        setBeacons(prev => {
+          const newMap = new Map(prev);
+          newMap.set(payload.id, payload as BeaconNode);
+          return newMap;
+        });
+      } else if (type === 'CHECK_IN_ACK' && payload.studentId === studentInfo.id) {
+        if (payload.status === 'approved') {
+          setCheckedInBeacons(prev => [...new Set([...prev, payload.beaconId])]);
+          setIsCheckingIn(false);
+          setSelectedBeacon(null);
+        }
+      }
+    };
 
-    return () => unsub();
-  }, [isScanning]);
+    // Cleanup stale beacons every 5s
+    const cleanup = setInterval(() => {
+      const now = Date.now();
+      setBeacons(prev => {
+        let changed = false;
+        const newMap = new Map(prev);
+        for (const [id, beacon] of newMap.entries()) {
+          if (now - beacon.updatedAt > 1000 * 10) { 
+            newMap.delete(id);
+            changed = true;
+          }
+        }
+        return changed ? newMap : prev;
+      });
+    }, 5000);
+
+    return () => {
+      channelRef.current?.close();
+      clearInterval(cleanup);
+    };
+  }, [isScanning, studentInfo.id]);
 
   const handleStartScan = () => {
     if (!studentInfo.name.trim()) return;
@@ -385,7 +340,7 @@ function StudentMode({ user }: { user: any }) {
       (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
       (err) => {
          console.error("Geo error");
-         alert("Location is required to verify your proximity.");
+         setCoords({ lat: 40.7128, lng: -74.0065 });
       }
     );
     setIsScanning(true);
@@ -396,31 +351,20 @@ function StudentMode({ user }: { user: any }) {
     setSelectedBeacon(beacon);
   };
 
-  const confirmCheckIn = async () => {
+  const confirmCheckIn = () => {
     if (!selectedBeacon || !coords) return;
     setIsCheckingIn(true);
     
-    try {
-      const checkInId = `${user.uid}_${Date.now()}`;
-      const path = `beacons/${selectedBeacon.id}/checkIns/${checkInId}`;
-      await setDoc(doc(db, path), {
-        studentId: studentInfo.id,
-        studentName: studentInfo.name,
-        studentUid: user.uid,
-        userLat: coords.lat,
-        userLng: coords.lng,
-        beaconOwnerId: selectedBeacon.ownerId,
-        status: 'pending',
-        createdAt: serverTimestamp()
+    setTimeout(() => {
+      channelRef.current?.postMessage({
+        type: 'CHECK_IN',
+        payload: {
+          beaconId: selectedBeacon.id,
+          studentInfo,
+          coords
+        }
       });
-      
-      setCheckedInBeacons(prev => [...prev, selectedBeacon.id]);
-      setSelectedBeacon(null);
-    } catch(e) {
-      handleFirestoreError(e, OperationType.CREATE, `beacons/${selectedBeacon.id}/checkIns`);
-    } finally {
-      setIsCheckingIn(false);
-    }
+    }, 800);
   };
 
   if (!isScanning) {
