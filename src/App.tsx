@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect } from 'react';
 import { ShieldCheck, MapPin, CheckCircle2, Radar, User, Radio, Smartphone, AlertTriangle, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
@@ -6,29 +6,16 @@ import { io, Socket } from 'socket.io-client';
 
 const socket = io(); // Connects to the host that serves the page
 
-// Haversine distance formula (returns distance in meters)
-function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const R = 6371e3; 
-  const φ1 = lat1 * Math.PI/180;
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180;
-  const Δλ = (lon2-lon1) * Math.PI/180;
-
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-  return R * c; 
+// Utility to generate a consistent hash from a string to fix positions
+function getStringHash(str: string) {
+  return Array.from(str).reduce((sum, char) => sum + char.charCodeAt(0), 0);
 }
 
 interface BeaconNode {
   id: string;
   name: string;
-  lat: number;
-  lng: number;
-  ownerId: string;
   active: boolean;
-  updatedAt: any;
+  updatedAt: number;
 }
 
 interface CheckInRequest {
@@ -41,6 +28,16 @@ interface CheckInRequest {
 
 export default function App() {
   const [role, setRole] = useState<'beacon' | 'student' | null>(null);
+
+  useEffect(() => {
+    // Basic connection handler
+    socket.on('connect', () => {
+      console.log('Connected to socket server');
+    });
+    return () => {
+      socket.off('connect');
+    };
+  }, []);
 
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 font-sans selection:bg-blue-500/30 overflow-hidden relative">
@@ -82,7 +79,7 @@ export default function App() {
               <div className="text-center mb-12 space-y-4">
                  <h2 className="text-4xl md:text-5xl font-bold text-white tracking-tight">Event Proximity</h2>
                  <p className="text-slate-400 text-lg max-w-xl mx-auto">
-                    Automatically discover nearby event beacons and check in securely.
+                    Automatically discover nearby event beacons and check in securely using local network presence.
                  </p>
               </div>
               
@@ -127,14 +124,19 @@ export default function App() {
 function BeaconMode() {
   const [beaconName, setBeaconName] = useState("Main Stage");
   const [isBroadcasting, setIsBroadcasting] = useState(false);
-  const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
   const [checkIns, setCheckIns] = useState<CheckInRequest[]>([]);
   const [beaconId] = useState(() => 'BCA_' + Math.floor(Math.random() * 1000000));
   
   useEffect(() => {
     const handleMessage = (data: any) => {
       const { type, payload } = data;
-      if (type === 'CHECK_IN' && payload.beaconId === beaconId) {
+      if (type === 'PING') {
+        socket.emit('message', {
+          target: data.caller,
+          type: 'PONG',
+          payload: payload
+        });
+      } else if (type === 'CHECK_IN' && payload.beaconId === beaconId) {
         setCheckIns(prev => {
           if (prev.find(c => c.studentId === payload.studentInfo.id)) return prev;
           const newCI: CheckInRequest = {
@@ -167,15 +169,13 @@ function BeaconMode() {
 
   useEffect(() => {
     let interval: any;
-    if (isBroadcasting && coords) {
+    if (isBroadcasting) {
       const broadcast = () => {
         socket.emit('message', {
           type: 'BEACON_ANNOUNCE',
           payload: {
             id: beaconId,
             name: beaconName,
-            lat: coords.lat,
-            lng: coords.lng,
             active: true,
             updatedAt: Date.now()
           }
@@ -185,24 +185,10 @@ function BeaconMode() {
       interval = setInterval(broadcast, 1000 * 3);
     }
     return () => clearInterval(interval);
-  }, [isBroadcasting, coords, beaconName, beaconId]);
+  }, [isBroadcasting, beaconName, beaconId]);
 
   const toggleBroadcast = () => {
-    if (!isBroadcasting) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-           setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-           setIsBroadcasting(true);
-        },
-        (err) => {
-           console.error("Geo error, using mock coords", err);
-           setCoords({ lat: 40.7128, lng: -74.0060 });
-           setIsBroadcasting(true);
-        }
-      );
-    } else {
-      setIsBroadcasting(false);
-    }
+    setIsBroadcasting(!isBroadcasting);
   };
 
   return (
@@ -286,7 +272,7 @@ function StudentMode() {
   const [studentInfo, setStudentInfo] = useState({ name: 'Jane Doe', id: 'STU' + Math.floor(Math.random() * 9000 + 1000) });
   const [isScanning, setIsScanning] = useState(false);
   const [beacons, setBeacons] = useState<Map<string, BeaconNode>>(new Map());
-  const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
+  const [pings, setPings] = useState<Record<string, number>>({});
   
   const [selectedBeacon, setSelectedBeacon] = useState<BeaconNode | null>(null);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
@@ -295,12 +281,54 @@ function StudentMode() {
   useEffect(() => {
     if (!isScanning) return;
     
+    // Ping all active beacons periodically
+    beacons.forEach(beacon => {
+      socket.emit('message', {
+        target: beacon.socketId,
+        type: 'PING',
+        payload: { timestamp: Date.now(), beaconId: beacon.id }
+      });
+    });
+
+    const pingLoop = setInterval(() => {
+      beacons.forEach(beacon => {
+        socket.emit('message', {
+          target: beacon.socketId,
+          type: 'PING',
+          payload: { timestamp: Date.now(), beaconId: beacon.id }
+        });
+      });
+    }, 2000);
+    return () => clearInterval(pingLoop);
+  }, [isScanning, beacons]);
+
+  useEffect(() => {
+    if (!isScanning) return;
+    
+    const handleSync = (data: any[]) => {
+      setBeacons(prev => {
+        const newMap = new Map(prev);
+        data.forEach(b => newMap.set(b.id, b));
+        return newMap;
+      });
+    };
+
     const handleMessage = (data: any) => {
       const { type, payload } = data;
-      if (type === 'BEACON_ANNOUNCE') {
+      if (type === 'PONG') {
+        const rtt = Date.now() - payload.timestamp;
+        setPings(prev => ({ ...prev, [payload.beaconId]: rtt }));
+      } else if (type === 'BEACON_ANNOUNCE') {
         setBeacons(prev => {
           const newMap = new Map(prev);
           newMap.set(payload.id, payload as BeaconNode);
+          return newMap;
+        });
+      } else if (type === 'BEACON_REMOVE') {
+        setBeacons(prev => {
+          if (!prev.has(payload.id)) return prev;
+          const newMap = new Map(prev);
+          newMap.delete(payload.id);
           return newMap;
         });
       } else if (type === 'CHECK_IN_ACK' && payload.studentId === studentInfo.id) {
@@ -312,6 +340,7 @@ function StudentMode() {
       }
     };
 
+    socket.on('SYNC_BEACONS', handleSync);
     socket.on('message', handleMessage);
 
     // Cleanup stale beacons every 5s
@@ -331,6 +360,7 @@ function StudentMode() {
     }, 5000);
 
     return () => {
+      socket.off('SYNC_BEACONS', handleSync);
       socket.off('message', handleMessage);
       clearInterval(cleanup);
     };
@@ -338,13 +368,6 @@ function StudentMode() {
 
   const handleStartScan = () => {
     if (!studentInfo.name.trim()) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setCoords({ lat: pos.coords.latitude, lng: pos.coords.longitude }),
-      (err) => {
-         console.error("Geo error");
-         setCoords({ lat: 40.7128, lng: -74.0065 });
-      }
-    );
     setIsScanning(true);
   };
 
@@ -354,7 +377,7 @@ function StudentMode() {
   };
 
   const confirmCheckIn = () => {
-    if (!selectedBeacon || !coords) return;
+    if (!selectedBeacon) return;
     setIsCheckingIn(true);
     
     setTimeout(() => {
@@ -363,7 +386,6 @@ function StudentMode() {
         payload: {
           beaconId: selectedBeacon.id,
           studentInfo,
-          coords
         }
       });
     }, 800);
@@ -427,20 +449,17 @@ function StudentMode() {
 
       <AnimatePresence>
         {Array.from(beacons.values()).map((beacon: BeaconNode) => {
-           // We filter out stale beacons visually if their updatedAt is old, but firestore handles active=true mostly
-           // For realism, let distance dictate ring layer
-           let dist = 100;
-           if (coords) {
-             dist = getDistance(coords.lat, coords.lng, beacon.lat, beacon.lng);
-           }
-           
-           const hash = Array.from(beacon.name).reduce((sum, char) => sum + char.charCodeAt(0), 0);
+           // We map the node to a consistent ring and angle based on real network latency!
+           const hash = getStringHash(beacon.name + beacon.id);
            const angle = (hash * 47) % 360;
            
-           // If far away, put on outer ring, etc.
-           let radiusStr = `30vh`;
-           if (dist < 10) radiusStr = `15vh`;
-           if (dist > 50) radiusStr = `45vh`;
+           // Real network distance (RTT ping latency)
+           const rtt = pings[beacon.id] || 999;
+           let radiusVal = 45; // Default far
+           if (rtt < 100) radiusVal = 15;
+           else if (rtt < 300) radiusVal = 30;
+           
+           const radiusStr = `${radiusVal}vh`;
            
            const isCheckedIn = checkedInBeacons.includes(beacon.id);
 
@@ -493,8 +512,9 @@ function StudentMode() {
                   <MapPin size={32} />
                </div>
                <h3 className="text-xl font-bold mb-1">{selectedBeacon.name}</h3>
-               <p className="text-sm border border-slate-700 bg-slate-900 px-3 py-1 rounded-full text-slate-400 font-mono mb-6">
-                 ~ {coords ? Math.round(getDistance(coords.lat, coords.lng, selectedBeacon.lat, selectedBeacon.lng)) : '< 20'} meters away
+               <p className="text-sm border border-slate-700 bg-slate-900 px-3 py-1 rounded-full text-slate-400 font-mono mb-6 flex items-center gap-2">
+                 <Radio size={14} className={(pings[selectedBeacon.id] || 999) < 100 ? 'text-emerald-400' : 'text-amber-400'} />
+                 {pings[selectedBeacon.id] ? `${Math.round(pings[selectedBeacon.id])}ms latency` : 'Measuring ping...'}
                </p>
 
                <div className="w-full flex gap-3">

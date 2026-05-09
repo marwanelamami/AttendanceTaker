@@ -1,19 +1,14 @@
 import express from "express";
 import { createServer as createViteServer } from "vite";
-import { createServer as createHttpServer } from "http";
+import http from "http";
 import { Server } from "socket.io";
 import path from "path";
-import process from "process";
-import { fileURLToPath } from 'url';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
-  const httpServer = createHttpServer(app);
+  const httpServer = http.createServer(app);
   const io = new Server(httpServer, {
     cors: {
       origin: "*",
@@ -21,10 +16,48 @@ async function startServer() {
     }
   });
 
+  const activeBeacons = new Map();
+
   io.on('connection', (socket) => {
+    // Send existing beacons to the newly connected client
+    socket.emit('SYNC_BEACONS', Array.from(activeBeacons.values()));
+
     socket.on('message', (data) => {
-      // Broadcast to all other clients
-      socket.broadcast.emit('message', data);
+      const { type, payload, target } = data;
+      
+      // Inject caller
+      data.caller = socket.id;
+
+      // Route directed P2P messages
+      if (target) {
+        io.to(target).emit('message', data);
+        return;
+      }
+
+      if (type === 'BEACON_ANNOUNCE') {
+        const beaconData = { ...payload, socketId: socket.id, updatedAt: Date.now() };
+        activeBeacons.set(payload.id, beaconData);
+        // Broadcast to all clients
+        socket.broadcast.emit('message', { type: 'BEACON_ANNOUNCE', payload: beaconData });
+      }
+      else if (type === 'CHECK_IN') {
+        socket.broadcast.emit('message', data);
+      }
+      else if (type === 'CHECK_IN_ACK') {
+        socket.broadcast.emit('message', data);
+      }
+    });
+
+    socket.on('disconnect', () => {
+      for (const [id, beacon] of activeBeacons.entries()) {
+        if (beacon.socketId === socket.id) {
+          activeBeacons.delete(id);
+          io.emit('message', {
+            type: 'BEACON_REMOVE',
+            payload: { id }
+          });
+        }
+      }
     });
   });
 
