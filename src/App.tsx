@@ -2,7 +2,9 @@ import { useState, useEffect, useRef } from 'react';
 import { ShieldCheck, MapPin, CheckCircle2, Radar, User, Radio, Smartphone, AlertTriangle, Users } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
-const CHANNEL_NAME = 'dropsync_event_channel';
+import { io, Socket } from 'socket.io-client';
+
+const socket = io(); // Connects to the host that serves the page
 
 // Haversine distance formula (returns distance in meters)
 function getDistance(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -128,12 +130,10 @@ function BeaconMode() {
   const [coords, setCoords] = useState<{lat: number, lng: number} | null>(null);
   const [checkIns, setCheckIns] = useState<CheckInRequest[]>([]);
   const [beaconId] = useState(() => 'BCA_' + Math.floor(Math.random() * 1000000));
-  const channelRef = useRef<BroadcastChannel | null>(null);
-
+  
   useEffect(() => {
-    channelRef.current = new BroadcastChannel(CHANNEL_NAME);
-    channelRef.current.onmessage = (event) => {
-      const { type, payload } = event.data;
+    const handleMessage = (data: any) => {
+      const { type, payload } = data;
       if (type === 'CHECK_IN' && payload.beaconId === beaconId) {
         setCheckIns(prev => {
           if (prev.find(c => c.studentId === payload.studentInfo.id)) return prev;
@@ -148,7 +148,7 @@ function BeaconMode() {
         });
         
         // Ack check in
-        channelRef.current?.postMessage({
+        socket.emit('message', {
           type: 'CHECK_IN_ACK',
           payload: {
             beaconId: beaconId,
@@ -158,8 +158,10 @@ function BeaconMode() {
         });
       }
     };
+
+    socket.on('message', handleMessage);
     return () => {
-      channelRef.current?.close();
+      socket.off('message', handleMessage);
     };
   }, [beaconId]);
 
@@ -167,7 +169,7 @@ function BeaconMode() {
     let interval: any;
     if (isBroadcasting && coords) {
       const broadcast = () => {
-        channelRef.current?.postMessage({
+        socket.emit('message', {
           type: 'BEACON_ANNOUNCE',
           payload: {
             id: beaconId,
@@ -289,14 +291,12 @@ function StudentMode() {
   const [selectedBeacon, setSelectedBeacon] = useState<BeaconNode | null>(null);
   const [isCheckingIn, setIsCheckingIn] = useState(false);
   const [checkedInBeacons, setCheckedInBeacons] = useState<string[]>([]);
-  const channelRef = useRef<BroadcastChannel | null>(null);
 
   useEffect(() => {
     if (!isScanning) return;
     
-    channelRef.current = new BroadcastChannel(CHANNEL_NAME);
-    channelRef.current.onmessage = (event) => {
-      const { type, payload } = event.data;
+    const handleMessage = (data: any) => {
+      const { type, payload } = data;
       if (type === 'BEACON_ANNOUNCE') {
         setBeacons(prev => {
           const newMap = new Map(prev);
@@ -312,12 +312,14 @@ function StudentMode() {
       }
     };
 
+    socket.on('message', handleMessage);
+
     // Cleanup stale beacons every 5s
     const cleanup = setInterval(() => {
       const now = Date.now();
       setBeacons(prev => {
         let changed = false;
-        const newMap = new Map(prev);
+        const newMap = new Map<string, BeaconNode>(prev);
         for (const [id, beacon] of newMap.entries()) {
           if (now - beacon.updatedAt > 1000 * 10) { 
             newMap.delete(id);
@@ -329,7 +331,7 @@ function StudentMode() {
     }, 5000);
 
     return () => {
-      channelRef.current?.close();
+      socket.off('message', handleMessage);
       clearInterval(cleanup);
     };
   }, [isScanning, studentInfo.id]);
@@ -356,7 +358,7 @@ function StudentMode() {
     setIsCheckingIn(true);
     
     setTimeout(() => {
-      channelRef.current?.postMessage({
+      socket.emit('message', {
         type: 'CHECK_IN',
         payload: {
           beaconId: selectedBeacon.id,
@@ -424,7 +426,7 @@ function StudentMode() {
       </div>
 
       <AnimatePresence>
-        {Array.from(beacons.values()).map((beacon) => {
+        {Array.from(beacons.values()).map((beacon: BeaconNode) => {
            // We filter out stale beacons visually if their updatedAt is old, but firestore handles active=true mostly
            // For realism, let distance dictate ring layer
            let dist = 100;
